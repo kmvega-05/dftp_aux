@@ -1,11 +1,7 @@
 import time
-from enum import Enum
 
-class NodeType(Enum):
-    ROUTING = "ROUTING"
-    PROCESSING = "PROCESSING"
-    DATA = "DATA"
-    AUTH = "AUTH"
+from app.node_type import NodeType
+
 
 class ServiceRegister:
     """
