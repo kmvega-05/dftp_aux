@@ -8,8 +8,6 @@ from comm.message import Message
 
 
 def handle_cdup(command: 'Command',client_session: 'FTPSession', processing_node: 'ProcessingNode'):
-    print("CDUP handler called")
-    pass
     """Maneja comando CDUP - Change to Parent Directory"""
 
     # Chequear argumentos
@@ -22,11 +20,11 @@ def handle_cdup(command: 'Command',client_session: 'FTPSession', processing_node
 
     # Obtener directorio raiz y actual
     user_root = client_session.root_directory
-    current_dir = client_session.current_directory
+    current_dir = client_session.current_path
     ip, port = processing_node.get_data_node()
-    msg = Message(type="CHECK_EXISTS", src= processing_node.ip, dst=ip, payload={"root": user_root, "current": current_dir, "absolute": "..", "want": 'dir'})
-    response = processing_node.send_message(ip, port, msg, await_response=True, timeout= 2.0)
+    msg = Message(type="CHECK_EXISTS", src= processing_node.ip, dst=ip, payload={"root": user_root, "current": current_dir, "path": "..", "want": 'dir'})
     try:
+        response = processing_node.send_message(ip, port, msg, await_response=True, timeout= 2.0)
         virtual = response.payload.get("path")
     except Exception as e:
         return 550, str(e)

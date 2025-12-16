@@ -1,38 +1,37 @@
 import os
-#from entities.file_system_manager import _GLOBAL_FSM as fs_manager, SecurityError
+from app.processing.command import Command
+from app.processing.processing_node import ProcessingNode
+from app.router.FTPSession import FTPSession
+from comm.message import Message
 
 
-def handle_cwd(command, client_socket, client_session):
-    pass
-    # """Maneja comando CWD - Change Working Directory"""
+def handle_cwd(command: 'Command', client_session: 'FTPSession', processing_node: 'ProcessingNode'):
+    """Maneja comando CWD - Change Working Directory"""
 
-    # # Chequear argumentos
-    # if not command.require_args(1):
-    #     client_session.send_response(client_socket, 501, "Syntax error in parameters")
-    #     return
+    # Chequear argumentos
+    if not command.require_args(1):
+        return 501, "Syntax error in parameters"
 
-    # # Verificar autenticación
-    # if not client_session.is_authenticated():
-    #     client_session.send_response(client_socket, 530, "Not logged in")
-    #     return
+    # Verificar autenticación
+    if not client_session.is_authenticated():
+        return 530, "Not logged in"
 
-    # new_directory = command.get_arg(0)
+    new_directory = command.get_arg(0)
 
-    # # Obtener directorio raíz y actual
-    # user_root = client_session.root_directory
-    # current_directory = client_session.current_directory
+    # Obtener directorio raíz y actual
+    user_root = client_session.root_directory
+    current_dir = client_session.current_path
+    ip, port = processing_node.get_data_node()
+    msg = Message(type="CHECK_EXISTS", src= processing_node.ip, dst=ip, payload={"root": user_root, "current": current_dir, "path": new_directory, "want": 'dir'})
+    try:
+        response = processing_node.send_message(ip, port, msg, await_response=True, timeout= 2.0)
+        virtual = response.payload.get("path")
+    except Exception as e:
+        return 550, str(e)
+    except FileNotFoundError:
+        return 550, "Directory not found"
+    except NotADirectoryError:
+        return 550, "Not a directory"
 
-    # try:
-    #     virtual, _ = fs_manager.exists(user_root, current_directory, new_directory, want='dir')
-    # except SecurityError as e:
-    #     client_session.send_response(client_socket, 550, str(e))
-    #     return
-    # except FileNotFoundError:
-    #     client_session.send_response(client_socket, 550, "Directory not found")
-    #     return
-    # except NotADirectoryError:
-    #     client_session.send_response(client_socket, 550, "Not a directory")
-    #     return
-
-    # client_session.current_directory = virtual
-    # client_session.send_response(client_socket, 250, f'Directory changed to "{virtual}"')
+    client_session.current_path = virtual
+    return 250, f'Directory changed to "{virtual}"'

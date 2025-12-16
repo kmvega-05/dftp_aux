@@ -1,140 +1,88 @@
-# import os
-# import socket
-# import random
-# import ipaddress
-# import logging
+import logging
+from comm.message import Message
+from app.processing.command import Command
+from app.router.FTPSession import FTPSession
+from app.processing.processing_node import ProcessingNode
 
-# logger = logging.getLogger(__name__)
+logger = logging.getLogger("dftp.processing.handlers.pasv")
 
 
-def handle_pasv(command, client_socket, client_session):
-    pass
-#     """Maneja comando PASV - modo pasivo para transferencia de datos.
+def handle_pasv(
+    command: Command,
+    client_session: FTPSession,
+    processing_node: ProcessingNode
+):
+    """
+    Maneja comando PASV (modo pasivo).
 
-#     - usa el rango PASV_MIN_PORT..PASV_MAX_PORT (env) para elegir puerto
-#     - bind a 0.0.0.0 para aceptar conexiones desde dentro y desde fuera
-#     - anuncia PASV_ADVERTISE_HOST (env) para clientes externos; si el
-#       cliente parece estar dentro del overlay (OVERLAY_SUBNET env) anuncia
-#       la IP local del contenedor
-#     - guarda el socket/puerto en la sesión con `set_pasv` """
-    
-#     if not client_session.is_authenticated():
-#         client_session.send_response(client_socket, 530, "Not logged in")
-#         return
+    Flujo:
+    - Validar sesión
+    - Solicitar al DataNode apertura PASV
+    - Guardar estado en la sesión
+    - Responder 227
+    """
 
-#     if not command.require_args(0):
-#         client_session.send_response(client_socket, 501, "Syntax error in parameters")
-#         return
+    # ---------- Validaciones ----------
+    if not client_session.authenticated:
+        return 530, "Not logged in"
 
-#     # limpiar estado PASV previo
-#     try:
-#         client_session.cleanup_pasv()
-#     except Exception:
-#         pass
+    # RFC: PASV no acepta argumentos, pero no es error fatal
+    if command.arg_count() != 0:
+        return 501, "Syntax error in parameters"
 
-#     try:
-#         # crear socket pasivo en rango configurado
-#         port_min = int(os.getenv('PASV_MIN_PORT', '30000'))
-#         port_max = int(os.getenv('PASV_MAX_PORT', '30100'))
-#         data_socket, data_port = create_data_socket(port_min, port_max)
+    # Limpiar PASV previo si existía
+    client_session.cleanup_pasv()
 
-#         # Guardar en la sesión
-#         client_session.set_pasv(data_socket, data_port)
-        
-#         # decidir IP a anunciar según origen del cliente
-#         client_ip = None
-#         try:
-#             client_ip = client_session.client_address[0]
-#         except Exception:
-#             try:
-#                 client_ip = client_socket.getpeername()[0]
-#             except Exception:
-#                 client_ip = None
+    # ---------- Seleccionar DataNode ----------
+    data_node_ip, data_node_port = processing_node.get_data_node()
+    if not data_node_ip:
+        return 425, "Can't open data connection"
 
-#         pasv_ip = get_pasv_ip(client_ip)
+    # ---------- Solicitar apertura PASV ----------
+    msg = Message(
+        type="OPEN_PASV",
+        src=processing_node.ip,
+        dst=data_node_ip,
+        payload={
+            "session_id": client_session.session_id,
+            "client_ip": getattr(client_session, "client_ip", None)
+        }
+    )
 
-#         try:
-#             pasv_ip = socket.gethostbyname(pasv_ip)
-#         except Exception:
-#             # fallback a localhost
-#             pasv_ip = '127.0.0.1'
+    try:
+        response = processing_node.send_message(
+            data_node_ip,
+            data_node_port,
+            msg,
+            await_response=True,
+            timeout=2.0
+        )
+    except Exception:
+        logger.exception("Error contacting DataNode for PASV")
+        return 425, "Can't open data connection"
 
-#         ip_parts = pasv_ip.split('.')
-#         port_high = data_port // 256
-#         port_low = data_port % 256
-#         pasv_response = f"Entering Passive Mode ({','.join(ip_parts)},{port_high},{port_low})"
+    if not response or response.payload.get("status") != "OK":
+        return 425, "Can't open data connection"
 
-#         client_session.send_response(client_socket, 227, pasv_response)
+    # ---------- Extraer datos ----------
+    pasv_ip = response.payload.get("ip")
+    pasv_port = response.payload.get("port")
 
-#     except Exception as e:
-#         client_session.send_response(client_socket, 425, "Can't open data connection")
-        
+    if not pasv_ip or not pasv_port:
+        return 425, "Can't open data connection"
 
-# def create_data_socket(port_min=30000, port_max=30100):
-#     """Crea y configura un socket TCP para modo pasivo y devuelve (socket, puerto)."""
+    # ---------- Guardar estado PASV ----------
+    client_session.set_pasv(
+        data_node_ip=data_node_ip,
+        data_port=pasv_port
+    )
 
-#     for _ in range(50):
+    # ---------- Construir respuesta FTP ----------
+    ip_parts = pasv_ip.split(".")
+    port_high = pasv_port // 256
+    port_low = pasv_port % 256
 
-#         data_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-#         data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-#         port = random.randint(port_min, port_max)
-
-#         try:
-#             data_socket.bind(('0.0.0.0', port))
-#             data_socket.listen(1)
-#             return data_socket, port
-        
-#         except OSError:
-#             try:
-#                 data_socket.close()
-#             except Exception:
-#                 pass
-#             continue
-
-#     raise RuntimeError("No free PASV port in configured range")
-
-# def get_pasv_ip(client_ip: str) -> str:
-#     """
-#     Determina qué IP anunciar al cliente según su ubicación.
-#     - Si el cliente pertenece al rango de red privada Docker → usar IP interna del contenedor.
-#     - Si no, usar la IP pública pasada por variable de entorno.
-#     """
-#     overlay_range = os.getenv("OVERLAY_SUBNET", "10.0.0.0/8")
-#     advertise = os.getenv("PASV_ADVERTISE_HOST")  # host/IP announced to external clients
-
-#     # si no conocemos el client_ip, devolver advertise si existe, si no, usar local host
-#     if not client_ip:
-#         return advertise or socket.gethostbyname(socket.gethostname())
-
-#     try:
-#         client = ipaddress.ip_address(client_ip)
-#     except Exception:
-#         # Malformed client IP; fallback
-#         return advertise or socket.gethostbyname(socket.gethostname())
-
-#     try:
-#         overlay_net = ipaddress.ip_network(overlay_range, strict=False)
-#     except Exception:
-#         overlay_net = None
-
-#     # Si el cliente está en la red overlay configurada, usamos la IP local del contenedor
-#     if overlay_net and client in overlay_net:
-#         try:
-#             pasv_ip = socket.gethostbyname(socket.gethostname())
-#         except Exception:
-#             pasv_ip = '127.0.0.1'
-#         logger.info("[PASV] client %s detected as INTERNAL; announcing %s", client_ip, pasv_ip)
-#         return pasv_ip
-
-#     # Cliente externo: anunciar lo que venga de la config de entorno; si no está, intentar local
-#     if advertise:
-#         logger.info("[PASV] client %s detected as EXTERNAL; announcing %s", client_ip, advertise)
-#         return advertise
-
-#     try:
-#         fallback = socket.gethostbyname(socket.gethostname())
-#     except Exception:
-#         fallback = '127.0.0.1'
-#     logger.info("[PASV] client %s detected as EXTERNAL (no advertise); announcing %s", client_ip, fallback)
-#     return fallback
+    return (
+        227,
+        f"Entering Passive Mode ({','.join(ip_parts)},{port_high},{port_low})"
+    )
