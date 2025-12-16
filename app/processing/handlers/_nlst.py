@@ -1,44 +1,54 @@
-# from entities.file_system_manager import _GLOBAL_FSM as fs_manager
+# from comm.message import Message
+# from app.processing.command import Command
+# from app.router.FTPSession import FTPSession
+# from app.processing.processing_node import ProcessingNode
 
-def handle_nlst(command, client_socket, client_session):
-    print("NLST command is called")
-    pass
-    # """Maneja comando NLST - lista solo nombres de archivos"""
-    # if not client_session.is_authenticated():
-    #     client_session.send_response(client_socket, 530, "Not logged in")
-    #     return
 
-    # # NLST puede tener 0 o 1 argumentos
-    # if command.arg_count() > 1:
-    #     client_session.send_response(client_socket, 501, "Syntax error in parameters")
-    #     return
+# def handle_nlist(
+#     command: Command,
+#     client_session: FTPSession,
+#     processing_node: ProcessingNode
+# ):
+#     if not client_session.authenticated:
+#         return 530, "Not logged in"
 
-    # data_socket, _ = client_session.get_pasv_info()
-    # if not data_socket:
-    #     client_session.send_response(client_socket, 425, "Use PASV first")
-    #     return
+#     if command.arg_count() > 1:
+#         return 501, "Syntax error in parameters"
 
-    # list_path = command.get_arg(0) if command.arg_count() == 1 else "."
-    # user_root = client_session.root_directory
-    # current_directory = client_session.current_directory
+#     if not client_session.pasv_mode:
+#         return 425, "Use PASV first"
 
-    # try:
-    #     names = fs_manager.list_dir(user_root, current_directory, list_path)
-    # except Exception as e:
-    #     client_session.send_response(client_socket, 550, str(e))
-    #     return
+#     data_node_ip, data_node_port = processing_node.get_data_node()
 
-    # try:
-    #     data_conn, _ = data_socket.accept()
-    #     client_session.send_response(client_socket, 150, "Here comes the directory listing")
+#     list_path = command.get_arg(0) if command.arg_count() == 1 else "."
 
-    #     file_list = '\r\n'.join(names) + '\r\n' if names else ''
-    #     data_conn.sendall(file_list.encode('utf-8'))
-    #     data_conn.close()
-    #     client_session.send_response(client_socket, 226, "Directory send OK")
+#     # 1️⃣ ordenar transferencia
+#     msg = Message(
+#         type="DATA_LIST",
+#         src=processing_node.ip,
+#         dst=data_node_ip,
+#         payload={
+#             "session_id": client_session.session_id,
+#             "root": client_session.root_directory,
+#             "cwd": client_session.current_path,
+#             "path": list_path
+#         }
+#     )
 
-    # except Exception:
-    #     client_session.send_response(client_socket, 450, "Requested file action not taken")
+#     try:
+#         response = processing_node.send_message(
+#             data_node_ip,
+#             data_node_port,
+#             msg,
+#             await_response=True,
+#             timeout=5.0
+#         )
+#     except Exception:
+#         return 425, "Can't open data connection"
 
-    # finally:
-    #     client_session.cleanup_pasv()
+#     if not response or response.payload.get("status") != "OK":
+#         return 550, response.payload.get("msg", "LIST failed")
+
+#     # 2️⃣ FTP correcto: 226 al final
+#     client_session.cleanup_pasv()
+#     return 226, "Directory send OK"

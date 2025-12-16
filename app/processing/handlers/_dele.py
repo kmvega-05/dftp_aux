@@ -1,38 +1,34 @@
-# from entities.file_system_manager import _GLOBAL_FSM as fs_manager, SecurityError
+from app.processing.command import Command
+from app.processing.processing_node import ProcessingNode
+from app.router.FTPSession import FTPSession
+from comm.message import Message
 
 
-def handle_dele(command, client_socket, client_session):
-    print("DELE handler called")
-    pass
-    # """Maneja comando DELE - Delete file"""
+def handle_dele(command: 'Command', client_session: 'FTPSession', processing_node: 'ProcessingNode'):
+    """Maneja comando DELE - Delete file"""
 
-    # # Chequear argumentos
-    # if not command.require_args(1):
-    #     client_session.send_response(client_socket, 501, "Syntax error in parameters")
-    #     return
+    # Chequear argumentos
+    if not command.require_args(1):
+        return 501, "Syntax error in parameters"
 
-    # # Verificar autenticación
-    # if not client_session.is_authenticated():
-    #     client_session.send_response(client_socket, 530, "Not logged in")
-    #     return
+    # Verificar autenticación
+    if not client_session.authenticated:
+        return 530, "Not logged in"
 
-    # filename = command.get_arg(0)
-    # user_root = client_session.root_directory
-    # current_directory = client_session.current_directory
-
-    # try:
-    #     success, message = fs_manager.delete_file(user_root, current_directory, filename)
-    # except FileNotFoundError:
-    #     client_session.send_response(client_socket, 550, "File not found")
-    #     return
-    # except IsADirectoryError:
-    #     client_session.send_response(client_socket, 550, "Not a file")
-    #     return
-    # except SecurityError as e:
-    #     client_session.send_response(client_socket, 550, str(e))
-    #     return
-    # except Exception:
-    #     client_session.send_response(client_socket, 451, "Requested action aborted. Local error in processing")
-    #     return
-
-    # client_session.send_response(client_socket, 250, message)
+    filename = command.get_arg(0)
+    user_root = client_session.root_directory
+    current_directory = client_session.current_path
+    ip, port = processing_node.get_data_node()
+    msg = Message(type='CHECK_DELE', src=processing_node.ip, dst=ip, payload={'root': user_root, 'current': current_directory, 'path': filename})
+    try:
+        response = processing_node.send_message(ip, port, msg, True, 2.0)
+        msg = response.payload['msg']
+    except FileNotFoundError:
+        return 550, "File not found"
+    except IsADirectoryError:
+        return 550, "Not a file"
+    except Exception as e:
+        return 550, str(e)
+    except Exception:
+        return 451, "Requested action aborted. Local error in processing"
+    return 250, msg

@@ -1,40 +1,41 @@
 #from entities.file_system_manager import _GLOBAL_FSM as fs_manager, SecurityError
 
-def handle_mkd(command, client_socket, client_session):
-    print("MKD command is called")
-    pass
-    # """Maneja comando MKD - Make Directory (RFC-959).
+from app.processing.command import Command
+from app.processing.processing_node import ProcessingNode
+from app.router.FTPSession import FTPSession
+from comm.message import Message
 
-    # Crea un directorio relativo al current_directory del usuario o una ruta
-    # absoluta dentro del root del usuario.
-    # """
-    # # Chequea argumentos
-    # if not command.require_args(1):
-    #     client_session.send_response(client_socket, 501, "Syntax error in parameters")
-    #     return
 
-    # # Valida autenticación
-    # if not client_session.is_authenticated():
-    #     client_session.send_response(client_socket, 530, "Not logged in")
-    #     return
+def handle_mkd(command: 'Command', client_session: 'FTPSession', processing_node: 'ProcessingNode'):
+    """Maneja comando MKD - Make Directory (RFC-959).
 
-    # new_dir_name = command.get_arg(0)
+    Crea un directorio relativo al current_directory del usuario o una ruta
+    absoluta dentro del root del usuario.
+    """
+    # Chequea argumentos
+    if not command.require_args(1):
+        return 501, "Syntax error in parameters"
 
-    # # Obtener directorio raíz y actual (resolverá paths virtuales)
-    # user_root = client_session.root_directory 
-    # current_directory = client_session.current_directory
+    # Valida autenticación
+    if not client_session.is_authenticated():
+        return 530, "Not logged in"
 
-    # # Crea el directorio usando FileSystemManager
-    # try:
-    #     success, message = fs_manager.make_dir(user_root, current_directory, new_dir_name)
-    # except FileExistsError as e:
-    #     client_session.send_response(client_socket, 550, str(e))
-    #     return
-    # except SecurityError as e:
-    #     client_session.send_response(client_socket, 550, str(e))
-    #     return
-    # except Exception:
-    #     client_session.send_response(client_socket, 451, "Requested action aborted. Local error in processing")
-    #     return
+    new_dir_name = command.get_arg(0)
 
-    # client_session.send_response(client_socket, 257, message)
+    # Obtener directorio raíz y actual (resolverá paths virtuales)
+    user_root = client_session.root_directory 
+    current_directory = client_session.current_path
+    ip, port = processing_node.get_data_node()
+    msg = Message(type='CHECK_MKD', src=processing_node.ip, dst=ip, payload={'root': user_root, 'current': current_directory, 'dir': new_dir_name})
+    # Crea el directorio usando FileSystemManager
+    try:
+        response = processing_node.send_message(ip, port, msg, True, 2.0)
+        msg = response.payload['msg']
+    except FileExistsError as e:
+        return 550, str(e)
+    except Exception as e:
+        return 550, str(e)
+    except Exception:
+        return 451, "Requested action aborted. Local error in processing"
+
+    return 257, msg
