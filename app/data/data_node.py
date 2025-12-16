@@ -24,6 +24,8 @@ class DataNode(LocationNode):
         self.register_handler('CHECK_RNTO', self.check_rnto_handler())
         self.register_handler('OPEN_PASV', self.open_pasv_handler())
         self.register_handler('DATA_LIST', self.data_list_handler())
+        self.register_handler('DATA_RETR', self.data_retr_handler())
+        self.register_handler('DATA_STOR', self.data_stor_handler())
 
 
     def check_exists_handler(self, message: 'Message', sock):
@@ -240,3 +242,101 @@ class DataNode(LocationNode):
 
         return advertise or socket.gethostbyname(socket.gethostname())
 
+    def data_retr_handler(self, message: Message, sock):
+        payload = message.payload
+        session_id = payload["session_id"]
+        root = payload["root"]
+        current = payload["current"]
+        path = payload["path"]
+
+        data_socket = self.pasv_sockets.pop(session_id, None)
+        if not data_socket:
+            return Message(
+                type="DATA_RETR_RESPONSE",
+                src=self.ip,
+                dst=message.header.get("src"),
+                payload={"status": "ERROR", "msg": "No PASV socket"}
+            )
+
+        data_conn, _ = data_socket.accept()
+
+        try:
+            data_gen = self.file_system_manager.retrieve_stream(
+                user_root_directory=root,
+                user_current_directory=current,
+                file_path=path
+            )
+
+            for chunk in data_gen:
+                data_conn.sendall(chunk)
+
+        except Exception as e:
+            return Message(
+                type="DATA_RETR_RESPONSE",
+                src=self.ip,
+                dst=message.header.get("src"),
+                payload={"status": "ERROR", "msg": str(e)}
+            )
+
+        finally:
+            data_conn.close()
+
+        return Message(
+            type="DATA_RETR_RESPONSE",
+            src=self.ip,
+            dst=message.header.get("src"),
+            payload={"status": "OK"}
+        )
+
+    
+    def data_stor_handler(self, message: Message, sock):
+        payload = message.payload
+        session_id = payload["session_id"]
+        root = payload["root"]
+        current = payload["current"]
+        path = payload["path"]
+
+        data_socket = self.pasv_sockets.pop(session_id, None)
+        if not data_socket:
+            return Message(
+                type="DATA_STOR_RESPONSE",
+                src=self.ip,
+                dst=message.header.get("src"),
+                payload={"status": "ERROR", "msg": "No PASV socket"}
+            )
+
+        data_conn, _ = data_socket.accept()
+
+        def data_iter():
+            try:
+                while True:
+                    chunk = data_conn.recv(65536)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                data_conn.close()
+
+        try:
+            ok, msg = self.file_system_manager.store_stream(
+                user_root_directory=root,
+                user_current_directory=current,
+                file_path=path,
+                data_iterable=data_iter()
+            )
+            if not ok:
+                raise RuntimeError(msg)
+        except Exception as e:
+            return Message(
+                type="DATA_STOR_RESPONSE",
+                src=self.ip,
+                dst=message.header.get("src"),
+                payload={"status": "ERROR", "msg": str(e)}
+            )
+
+        return Message(
+            type="DATA_STOR_RESPONSE",
+            src=self.ip,
+            dst=message.header.get("src"),
+            payload={"status": "OK"}
+        )
